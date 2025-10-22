@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Company Shares Data</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f8f9fa;
+            color: #333;
+            padding-top: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: auto;
+            background-color: #fff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #0056b3;
+            margin-bottom: 30px;
+        }
+        .data-section {
+            margin-bottom: 25px;
+            border-left: 5px solid #007bff;
+            padding-left: 15px;
+        }
+        .data-section h3 {
+            color: #007bff;
+            margin-bottom: 15px;
+        }
+        .data-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px dashed #eee;
+        }
+        .data-item:last-child {
+            border-bottom: none;
+        }
+        .data-label {
+            font-weight: bold;
+            color: #555;
+        }
+        .data-value {
+            color: #000;
+        }
+        .alert-message {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 id="share-entity-name">Loading Company Data...</h1>
+
+        <div id="loading-spinner" class="text-center my-5" style="display: none;">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Fetching data...</p>
+        </div>
+
+        <div id="error-message" class="alert alert-danger alert-message" role="alert" style="display: none;">
+            Failed to load data. Please try again later or check the CIK.
+        </div>
+
+        <div id="data-display" style="display: none;">
+            <p>This page displays the maximum and minimum outstanding common stock shares for <span class="fw-bold" id="entity-name-display"></span>, considering fiscal years after 2020.</p>
+
+            <div class="row mt-4">
+                <div class="col-md-6">
+                    <div class="data-section">
+                        <h3>Maximum Shares Outstanding</h3>
+                        <div class="data-item">
+                            <span class="data-label">Value:</span>
+                            <span class="data-value" id="share-max-value"></span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Fiscal Year:</span>
+                            <span class="data-value" id="share-max-fy"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="data-section">
+                        <h3>Minimum Shares Outstanding</h3>
+                        <div class="data-item">
+                            <span class="data-label">Value:</span>
+                            <span class="data-value" id="share-min-value"></span>
+                        </div>
+                        <div class="data-item">
+                            <span class="data-label">Fiscal Year:</span>
+                            <span class="data-value" id="share-min-fy"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const defaultCik = '0000732717';
+            const urlParams = new URLSearchParams(window.location.search);
+            const cikParam = urlParams.get('CIK');
+
+            const loadingSpinner = document.getElementById('loading-spinner');
+            const errorMessage = document.getElementById('error-message');
+            const dataDisplay = document.getElementById('data-display');
+
+            async function fetchData(cik) {
+                loadingSpinner.style.display = 'block';
+                errorMessage.style.display = 'none';
+                dataDisplay.style.display = 'none';
+
+                let targetCik = cik || defaultCik;
+                const secApiUrl = `https://data.sec.gov/api/xbrl/companyconcept/CIK${targetCik}/dei/EntityCommonStockSharesOutstanding.json`;
+                const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(secApiUrl)}`;
+
+                try {
+                    const response = await fetch(proxyUrl);
+
+                    if (!response.ok) {
+                        let errorText = await response.text();
+                        try {
+                            const errorJson = JSON.parse(errorText);
+                            errorText = errorJson.error || errorJson.message || errorText;
+                        } catch (e) {
+                            // Not a JSON error
+                        }
+                        throw new Error(`HTTP error! Status: ${response.status}. Details: ${errorText.substring(0, 100)}...`);
+                    }
+
+                    const secData = await response.json();
+
+                    const processedData = processSecApiResponse(secData);
+
+                    if (!processedData || !processedData.entityName || !processedData.max || !processedData.min || typeof processedData.max.val === 'undefined' || typeof processedData.min.val === 'undefined') {
+                         throw new Error('Invalid data structure received after processing SEC API response.');
+                    }
+
+                    updateUI(processedData);
+                    dataDisplay.style.display = 'block';
+
+                } catch (error) {
+                    console.error('Error fetching or processing data:', error);
+                    errorMessage.textContent = `Failed to load data: ${error.message}. Please check the CIK or try again later.`;
+                    errorMessage.style.display = 'block';
+                } finally {
+                    loadingSpinner.style.display = 'none';
+                }
+            }
+
+            function processSecApiResponse(secData) {
+                const entityName = secData.entityName;
+                const sharesData = secData.units.shares;
+
+                let filteredShares = sharesData.filter(entry => {
+                    return parseInt(entry.fy) > 2020 && typeof entry.val === 'number';
+                });
+
+                if (filteredShares.length === 0) {
+                    throw new Error("No valid shares data found for the specified criteria (fy > 2020).");
+                }
+
+                let maxValEntry = filteredShares[0];
+                let minValEntry = filteredShares[0];
+
+                for (const entry of filteredShares) {
+                    if (entry.val > maxValEntry.val) {
+                        maxValEntry = entry;
+                    }
+                    if (entry.val < minValEntry.val) {
+                        minValEntry = entry;
+                    }
+                }
+
+                return {
+                    entityName: entityName,
+                    max: {
+                        val: maxValEntry.val,
+                        fy: maxValEntry.fy
+                    },
+                    min: {
+                        val: minValEntry.val,
+                        fy: minValEntry.fy
+                    }
+                };
+            }
+
+            function updateUI(data) {
+                document.title = `${data.entityName} Shares Data`;
+                document.getElementById('share-entity-name').textContent = `${data.entityName} Shares Data`;
+                document.getElementById('entity-name-display').textContent = data.entityName;
+
+                document.getElementById('share-max-value').textContent = data.max.val.toLocaleString();
+                document.getElementById('share-max-fy').textContent = data.max.fy;
+                document.getElementById('share-min-value').textContent = data.min.val.toLocaleString();
+                document.getElementById('share-min-fy').textContent = data.min.fy;
+            }
+
+            fetchData(cikParam);
+        });
+    </script>
+</body>
+</html>
